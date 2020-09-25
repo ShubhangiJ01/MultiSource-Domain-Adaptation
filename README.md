@@ -19,10 +19,15 @@ Two different distance functions are used to train our model:
 
 ## Execution:
 
-To run the code
+To run the code 
 ```console
-$ ./experiment.sh
+$ ./experiment.sh <parameter1> <parameter2> <parameter3> <parameter4>
 ```
+
+where parameter1 =Target Domain,
+parameter2 = max_epoch, 
+parameter3 = GPUID,
+parameter4 = record_folder
 
 
 
