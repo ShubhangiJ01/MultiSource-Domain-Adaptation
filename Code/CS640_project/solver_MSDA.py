@@ -4,17 +4,22 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 #import mmd
-#import msda
+import msda
 from torch.autograd import Variable
 #from model.build_gen import *
 from datasets.dataset_read import dataset_read
 import numpy as np
+from model.build_gen import *
+from model.grad_reverse import *
+from model.usps import *
+from model.syn2gtrsb import *
+
 
 
 # Training settings
 class Solver(object):
     def __init__(self, args, batch_size=64,
-                 target='sketch', learning_rate=0.0002, interval=100, optimizer='adam'
+                 target='It doesnt matter', learning_rate=0.0002, interval=100, optimizer='adam'
                  , checkpoint_dir=None, save_epoch=10):
         self.batch_size = batch_size
         self.target = target
@@ -23,21 +28,16 @@ class Solver(object):
         self.use_abs_diff = args.use_abs_diff
     
         print('dataset loading')
-        #self.datasets, self.dataset_test = dataset_read(target, self.batch_size, args)
+        #self.datasets, self.dataset_test = dataset_read(target, self.batch_size)
         self.datasets= dataset_read(target, self.batch_size, args)
-
-        print (self.datasets)
-        print()
-        print (type(self.datasets))
-        print()
-        
- 
+        #print(self.dataset['S1'].shape) 
+    
         print('load finished!')
         self.G = Generator()
         self.C1 = Classifier()
         self.C2 = Classifier()
         print('model_loaded')
-        
+
         if args.eval_only:
             self.G.torch.load(
                 '%s/%s_to_%s_model_epoch%s_G.pt' % (self.checkpoint_dir, self.source, self.target, args.resume_epoch))
@@ -46,17 +46,22 @@ class Solver(object):
                     self.checkpoint_dir, self.source, self.target, self.checkpoint_dir, args.resume_epoch))
             self.G.torch.load(
                 '%s/%s_to_%s_model_epoch%s_G.pt' % (self.checkpoint_dir, self.source, self.target, args.resume_epoch))
-        
+        """
         self.G.cuda()
         self.C1.cuda()
         self.C2.cuda()
+        """
+
+        self.G
+        self.C1
+        self.C2
+
         self.interval = interval
 
         self.set_optimizer(which_opt=optimizer, lr=learning_rate)
         self.lr = learning_rate
         print('initialize complete')
-        
-        
+
     def set_optimizer(self, which_opt='momentum', lr=0.001, momentum=0.9):
         if which_opt == 'momentum':
             self.opt_g = optim.SGD(self.G.parameters(),
@@ -96,26 +101,35 @@ class Solver(object):
 
 
     def train(self, epoch, record_file=None):
-        criterion = nn.CrossEntropyLoss().cuda()
+        #criterion = nn.CrossEntropyLoss().cuda()
+        criterion = nn.CrossEntropyLoss()
         self.G.train()
         self.C1.train()
         
-        torch.cuda.manual_seed(1)
+        torch.manual_seed(1)
 
         for batch_idx, data in enumerate(self.datasets):
+
+            """
             img_t = Variable(data['T'].cuda())
             img_s1 = Variable(data['S1'].cuda())
             img_s2 = Variable(data['S2'].cuda())
-            img_s3 = Variable(data['S3'].cuda())
-            img_s4 = Variable(data['S4'].cuda())
+            """
 
+            img_t = Variable(data['T'])
+            img_s1 = Variable(data['S1'])
+            img_s2 = Variable(data['S2'])
+
+            """
 
             label_s1 = Variable(data['S1_label'].long().cuda())
             label_s2 = Variable(data['S2_label'].long().cuda())
-            label_s3 = Variable(data['S3_label'].long().cuda())
-            label_s4 = Variable(data['S4_label'].long().cuda())
+            """
+            label_s1 = Variable(data['S1_label'].long())
+            label_s2 = Variable(data['S2_label'].long())
 
-            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size  or img_s3.size()[0] < self.batch_size or img_s4.size()[0]<self.batch_size or img_t.size()[0] < self.batch_size:
+
+            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size or img_t.size()[0] < self.batch_size:
                 break
 
             self.reset_grad()
@@ -126,23 +140,17 @@ class Solver(object):
             feat_s2 = self.G(img_s2)
             output_s2 = self.C1(feat_s2)
 
-            feat_s3 = self.G(img_s3)
-            output_s3 = self.C1(feat_s3)
-
-            feat_s4 = self.G(img_s4)
-            output_s4 = self.C1(feat_s4)
-
             feat_t = self.G(img_t)
             output_t = self.C1(feat_t)
 
             loss_s1 = criterion(output_s1, label_s1)
             loss_s2 = criterion(output_s2, label_s2)
-            loss_s3 = criterion(output_s3, label_s3)
-            loss_s4 = criterion(output_s4, label_s4)
 
-            loss_s = (loss_s1 + loss_s2 + loss_s3 + 10*loss_s4)/4
+            
+            loss_s = (loss_s1 + loss_s2 )/4
 
-            loss_msda =  0.5* msda.msda_regulizer(feat_s1, feat_s2, feat_s3, feat_s4, feat_t, 5) / (self.batch_size * self.batch_size)
+            loss_msda =  0.5* msda.msda_regulizer(feat_s1, feat_s2, feat_t, 3) / (self.batch_size * self.batch_size)
+            
             loss = loss_msda + loss_s
             loss_s.backward()
 
@@ -155,28 +163,46 @@ class Solver(object):
             if batch_idx % self.interval == 0:
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss1: {:.6f}\t Loss2: {:.6f}\t Loss3: {:.6f}\t Loss4: {:.6f}\t Discrepancy: {:.6f}'.format(
                     epoch, batch_idx, 100,
-                    100. * batch_idx / 70000, loss_s1.data[0], loss_s2.data[0], loss_s3.data[0] , loss_s4.data[0] ,loss_msda.data[0]))
+                    #100. * batch_idx / 70000, loss_s1.data[0], loss_s2.data[0], loss_s3.data[0] , loss_s4.data[0] ,loss_msda.data[0]))
+                    
+                    100. * batch_idx / 70000, loss_s1.data[0], loss_s2.data[0] ,loss_msda.data[0]))
+                    
                 if record_file:
                     record = open(record_file, 'a')
-                    record.write('%s %s %s %s %s\n' % (loss_msda.data[0], loss_s1.data[0], loss_s2.data[0], loss_s3.data[0], loss_s4.data[0]))
+                    #record.write('%s %s %s %s %s\n' % (loss_msda.data[0], loss_s1.data[0], loss_s2.data[0], loss_s3.data[0], loss_s4.data[0]))
+                    record.write('%s %s %s %s %s\n' % (loss_msda.data[0], loss_s1.data[0], loss_s2.data[0]))
                     record.close()
         return batch_idx
 
     def train_merge_baseline(self, epoch, record_file=None):
-        criterion = nn.CrossEntropyLoss().cuda()
+        #criterion = nn.CrossEntropyLoss().cuda()
+        criterion = nn.CrossEntropyLoss()
         self.G.train()
         self.C1.train()
         
-        torch.cuda.manual_seed(1)
+        #torch.cuda.manual_seed(1)
+        torch.manual_seed(1)
 
         for batch_idx, data in enumerate(self.datasets):
         	# if 
-            img_s = np.concatenate([data['S1'][0:44],data['S2'][44:88], data['S3'][88:]], 0)
-            label_s = np.concatenate([data['S1_label'][0:44],data['S2_label'][44:88],data['S3_label'][88:]], 0)
+            #img_s = np.concatenate([data['S1'][0:44],data['S2'][44:88], data['S3'][88:]], 0)
+            
+            img_s = np.concatenate([data['S1'][0:44],data['S2'][44:88]],0)
+
+            #label_s = np.concatenate([data['S1_label'][0:44],data['S2_label'][44:88],data['S3_label'][88:]], 0)
+            """
+            label_s = np.concatenate([data['S1_label'][0:44],data['S2_label'][44:88]], 0)
             img_t = Variable(data['T'].cuda())
             img_s = Variable(torch.from_numpy(img_s).cuda())
 
             label_s =Variable(torch.from_numpy(label_s).long().cuda())
+            """
+
+            img_t = Variable(data['T'])
+            img_s = Variable(torch.from_numpy(img_s))
+
+            label_s =Variable(torch.from_numpy(label_s).long())
+
 
             if img_s.size()[0] < self.batch_size  or img_t.size()[0] < self.batch_size:
                 break
@@ -222,7 +248,10 @@ class Solver(object):
             img = data['T']
             label = data['T_label']
 
-            img, label = img.cuda(), label.long().cuda()
+            #img, label = img.cuda(), label.long().cuda()
+
+            img, label = img, label.long()
+
             img, label = Variable(img, volatile=True), Variable(label)
             feat = self.G(img)
             print('feature.shape:{}'.format(feat.shape))
@@ -264,88 +293,115 @@ class Solver(object):
             record.close()
 
 
-    def feat_all_domain(self, img_s1, img_s2, img_s3, img_s4, img_t):
-    	return self.G(img_s1), self.G(img_s2), self.G(img_s3), self.G(img_s4), self.G(img_t)
+    def feat_all_domain(self, img_s1, img_s2,  img_t):
+    	return self.G(img_s1), self.G(img_s2),  self.G(img_t)
 
-    def C1_all_domain(self, feat1, feat2,feat3,feat4, feat_t):
-    	return self.C1(feat1), self.C1(feat2), self.C1(feat3), self.C1(feat4), self.C1(feat_t)
+    def C1_all_domain(self, feat1, feat2, feat_t):
+    	return self.C1(feat1), self.C1(feat2),  self.C1(feat_t)
     
-    def C2_all_domain(self, feat1, feat2,feat3,feat4, feat_t):
-    	return self.C2(feat1), self.C2(feat2), self.C2(feat3), self.C2(feat4), self.C2(feat_t) 
+    def C2_all_domain(self, feat1, feat2, feat_t):
+    	return self.C2(feat1), self.C2(feat2),  self.C2(feat_t) 
 
-    def softmax_loss_all_domain(self, output1, output2, output3, output4, label_s1, label_s2, label_s3, label_s4):
-    	criterion = nn.CrossEntropyLoss().cuda()
-    	return criterion(output1, label_s1), criterion(output2, label_s2), criterion(output3, label_s3), criterion(output4,label_s4)
+    def softmax_loss_all_domain(self, output1, output2,  label_s1, label_s2, ):
+    	criterion = nn.CrossEntropyLoss()
+        #criterion = nn.CrossEntropyLoss().cuda()
+    	return criterion(output1, label_s1), criterion(output2, label_s2)
 
-    def loss_all_domain(self, img_s1, img_s2, img_s3, img_s4, img_t, label_s1, label_s2, label_s3,label_s4):
-        feat_s1, feat_s2, feat_s3, feat_s4, feat_t = self.feat_all_domain(img_s1, img_s2, img_s3, img_s4, img_t)
-        output_s1_c1, output_s2_c1, output_s3_c1, output_s4_c1, output_t_c1 = \
-        	self.C1_all_domain(feat_s1, feat_s2, feat_s3, feat_s4, feat_t)
-        output_s1_c2, output_s2_c2, output_s3_c2, output_s4_c2, output_t_c2 = \
-        	self.C2_all_domain(feat_s1,feat_s2, feat_s3, feat_s4, feat_t)
-        loss_msda =  0.0005* msda.msda_regulizer(feat_s1, feat_s2, feat_s3, feat_s4, feat_t, 5)
-        loss_s1_c1, loss_s2_c1,loss_s3_c1,loss_s4_c1 =\
-            self.softmax_loss_all_domain(output_s1_c1, output_s2_c1, output_s3_c1,output_s4_c1, label_s1, label_s2, label_s3,label_s4)
-        loss_s1_c2, loss_s2_c2,loss_s3_c2,loss_s4_c2 =\
-            self.softmax_loss_all_domain(output_s1_c2, output_s2_c2, output_s3_c2,output_s4_c2, label_s1, label_s2, label_s3,label_s4)
-        return  loss_s1_c1, loss_s2_c1,loss_s3_c1,loss_s4_c1, loss_s1_c2, loss_s2_c2,loss_s3_c2,loss_s4_c2, loss_msda
+    def loss_all_domain(self, img_s1, img_s2,  img_t, label_s1, label_s2, ):
+        feat_s1, feat_s2,  feat_t = self.feat_all_domain(img_s1, img_s2,  img_t)
+        #print(feat_s1.shape)
+        output_s1_c1, output_s2_c1,  output_t_c1 = \
+        	self.C1_all_domain(feat_s1, feat_s2,  feat_t)
+        output_s1_c2, output_s2_c2,  output_t_c2 = \
+        	self.C2_all_domain(feat_s1,feat_s2,  feat_t)
+        loss_msda =  0.0005* msda.msda_regulizer(feat_s1, feat_s2,  feat_t, 3)
+        loss_s1_c1, loss_s2_c1 =\
+            self.softmax_loss_all_domain(output_s1_c1, output_s2_c1,  label_s1, label_s2)
+        loss_s1_c2, loss_s2_c2 =\
+            self.softmax_loss_all_domain(output_s1_c2, output_s2_c2, label_s1, label_s2)
+        return  loss_s1_c1, loss_s2_c1, loss_s1_c2, loss_s2_c2, loss_msda
 
     def train_MSDA(self, epoch, record_file=None):
-        criterion = nn.CrossEntropyLoss().cuda()
+        #criterion = nn.CrossEntropyLoss().cuda()
+        criterion = nn.CrossEntropyLoss()
         self.G.train()
         self.C1.train()
         self.C2.train()
-        torch.cuda.manual_seed(1)
+        torch.manual_seed(1)
 
         for batch_idx, data in enumerate(self.datasets):
+            """
             img_t = Variable(data['T'].cuda())
             img_s1 = Variable(data['S1'].cuda())
             img_s2 = Variable(data['S2'].cuda())
-            img_s3 = Variable(data['S3'].cuda())
-            img_s4 = Variable(data['S4'].cuda())
+
             label_s1 = Variable(data['S1_label'].long().cuda())
             label_s2 = Variable(data['S2_label'].long().cuda())
-            label_s3 = Variable(data['S3_label'].long().cuda())
-            label_s4 = Variable(data['S4_label'].long().cuda())
+            """
+
+            img_t = Variable(data['T'])
+            img_s1 = Variable(data['S1'])
+            img_s2 = Variable(data['S2'])
+            #print(img_s1) 
+                 
 
 
-            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size  or img_s3.size()[0] < self.batch_size or img_s4.size()[0]<self.batch_size or img_t.size()[0] < self.batch_size:
+            label_s1 = Variable(data['S1_label'].long())
+            label_s2 = Variable(data['S2_label'].long())
+            print(label_s1)
+
+
+            #print(label_s2)
+            #print(self.batch_size)
+            #print(img_s1.size()[0])
+            #print(img_s2.size()[0])
+            #print(img_t.size()[0])
+            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size or img_t.size()[0] < self.batch_size:
                 break            
-
+	    
+            #print("hello")
             self.reset_grad()
 
 
-            loss_s1_c1, loss_s2_c1,loss_s3_c1,loss_s4_c1, loss_s1_c2, loss_s2_c2, loss_s3_c2, loss_s4_c2, loss_msda = self.loss_all_domain(
-            	img_s1, img_s2, img_s3, img_s4, img_t,  label_s1, label_s2, label_s3,label_s4)
+            loss_s1_c1, loss_s2_c1, loss_s1_c2, loss_s2_c2,  loss_msda = self.loss_all_domain(
+            	img_s1, img_s2,  img_t,  label_s1, label_s2)
 
-            loss_s_c1 = loss_s1_c1 + loss_s2_c1 + loss_s3_c1 + loss_s4_c1
-            loss_s_c2 = loss_s1_c2 + loss_s2_c2 + loss_s3_c2 + loss_s4_c2
+            loss_s_c1 = loss_s1_c1 + loss_s2_c1 #+ loss_s3_c1 + loss_s4_c1
+            loss_s_c2 = loss_s1_c2 + loss_s2_c2 #+ loss_s3_c2 + loss_s4_c2
             loss = loss_s_c1 + loss_s_c2 + loss_msda
-
             loss.backward()
-            
             self.opt_g.step()
             self.opt_c1.step()
             self.opt_c2.step()
             self.reset_grad()
 
-            loss_s1_c1, loss_s2_c1,loss_s3_c1,loss_s4_c1, loss_s1_c2, loss_s2_c2,loss_s3_c2,loss_s4_c2, loss_msda =\
-            	self.loss_all_domain(img_s1, img_s2, img_s3, img_s4, img_t, label_s1, label_s2, label_s3,label_s4)     
-
+            loss_s1_c1, loss_s2_c1, loss_s1_c2, loss_s2_c2, loss_msda =	self.loss_all_domain(img_s1, img_s2,  img_t, label_s1, label_s2)     
 
             feat_t = self.G(img_t)
             output_t1 = self.C1(feat_t)
             output_t2 = self.C2(feat_t)
-            loss_s_c1 = loss_s1_c1 + loss_s2_c1 + loss_s3_c1 + loss_s4_c1
-            loss_s_c2 = loss_s1_c2 + loss_s2_c2 + loss_s3_c2 + loss_s4_c2
+            #print(output_t1.shape)
+            #print(output_t1)
+            #print(output_t2.shape)
+            #print(output_t2)
+            output = (output_t1 + output_t2)/2
+            #print(output)
+            output, max_index = torch.max(output,1)
+            #print(output)            
+            #print(max_index)
+
+            loss_s_c1 = loss_s1_c1 + loss_s2_c1 #+ loss_s3_c1 + loss_s4_c1
+            loss_s_c2 = loss_s1_c2 + loss_s2_c2 #+ loss_s3_c2 + loss_s4_c2
 
             loss_s = loss_s1_c1 + loss_s2_c2 + loss_msda
             loss_dis = self.discrepancy(output_t1, output_t2)
             loss = loss_s - loss_dis
+            print("Final loss $",loss)
             loss.backward()
             self.opt_c1.step()
             self.opt_c2.step()
             self.reset_grad()
+
 
             for i in range(4):
                 feat_t = self.G(img_t)
@@ -357,38 +413,58 @@ class Solver(object):
                 self.reset_grad()
             if batch_idx > 500:
                 return batch_idx
+	    
 
+            print("_________________________________")
+            #print(loss_s2_c1.data)
+            #print(loss_s1_c1.data)
+            #print(loss_s_c1.data)
+            #print(loss_s_c2.data[0])
+            #print(loss_dis.data[0])
             if batch_idx % self.interval == 0:
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss1: {:.6f}\t Loss2: {:.6f}\t  Discrepancy: {:.6f}'.format(
                     epoch, batch_idx, 100,
-                    100. * batch_idx / 70000, loss_s_c1.data[0], loss_s_c2.data[0], loss_dis.data[0]))
+                    100. * batch_idx / 70000, loss_s_c1.data, loss_s_c2.data, loss_dis.data))
                 if record_file:
                     record = open(record_file, 'a')
-                    record.write('%s %s %s\n' % (loss_dis.data[0], loss_s_c1.data[0], loss_s_c2.data[0]))
+                    record.write('%s %s %s\n' % (loss_dis.data, loss_s_c1.data, loss_s_c2.data))
                     record.close()
         return batch_idx
 
     def train_MMD(self, epoch, record_file=None):
-        criterion = nn.CrossEntropyLoss().cuda()
+        #criterion = nn.CrossEntropyLoss().cuda()
+        criterion = nn.CrossEntropyLoss()
         self.G.train()
         self.C1.train()
         
-        torch.cuda.manual_seed(1)
+        torch.manual_seed(1)
 
         for batch_idx, data in enumerate(self.datasets):
+            """
             img_t = Variable(data['T'].cuda())
             img_s1 = Variable(data['S1'].cuda())
             img_s2 = Variable(data['S2'].cuda())
-            img_s3 = Variable(data['S3'].cuda())
-            img_s4 = Variable(data['S4'].cuda())
+            #img_s3 = Variable(data['S3'].cuda())
+            #img_s4 = Variable(data['S4'].cuda())
 
 
             label_s1 = Variable(data['S1_label'].long().cuda())
             label_s2 = Variable(data['S2_label'].long().cuda())
-            label_s3 = Variable(data['S3_label'].long().cuda())
-            label_s4 = Variable(data['S4_label'].long().cuda())
+            """
 
-            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size  or img_s3.size()[0] < self.batch_size or img_s4.size()[0]<self.batch_size or img_t.size()[0] < self.batch_size:
+            img_t = Variable(data['T'])
+            img_s1 = Variable(data['S1'])
+            img_s2 = Variable(data['S2'])
+            #img_s3 = Variable(data['S3'].cuda())
+            #img_s4 = Variable(data['S4'].cuda())
+
+
+            label_s1 = Variable(data['S1_label'].long())
+            label_s2 = Variable(data['S2_label'].long())
+            #label_s3 = Variable(data['S3_label'].long().cuda())
+            #label_s4 = Variable(data['S4_label'].long().cuda())
+
+            if img_s1.size()[0] < self.batch_size or img_s2.size()[0] < self.batch_size  or img_t.size()[0] < self.batch_size:
                 break
             self.reset_grad()
             feat_s1 = self.G(img_s1)
@@ -397,11 +473,11 @@ class Solver(object):
             feat_s2 = self.G(img_s2)
             output_s2 = self.C1(feat_s2)
 
-            feat_s3 = self.G(img_s3)
-            output_s3 = self.C1(feat_s3)
+            #feat_s3 = self.G(img_s3)
+            #output_s3 = self.C1(feat_s3)
 
-            feat_s4 = self.G(img_s4)
-            output_s4 = self.C1(feat_s4)
+            #feat_s4 = self.G(img_s4)
+            #output_s4 = self.C1(feat_s4)
 
             feat_t = self.G(img_t)
             output_t = self.C1(feat_t)
@@ -409,18 +485,19 @@ class Solver(object):
             print('->shape', output_s1.shape, label_s1.shape)
             loss_s1 = criterion(output_s1, label_s1)
             loss_s2 = criterion(output_s2, label_s2)
-            loss_s3 = criterion(output_s3, label_s3)
-            loss_s4 = criterion(output_s4, label_s4)
+            #loss_s3 = criterion(output_s3, label_s3)
+            #loss_s4 = criterion(output_s4, label_s4)
 
 
-            loss_s = (loss_s1 + loss_s2 + loss_s3 + loss_s4)/4
+            #loss_s = (loss_s1 + loss_s2 + loss_s3 + loss_s4)/4
+            
+            loss_s = (loss_s1 + loss_s2 )/4
 
    
             sigma = [1,2,5,10]
-            loss_msda =  mmd.mix_rbf_mmd2(feat_s1, feat_s2, sigma) + mmd.mix_rbf_mmd2(feat_s1, feat_s3, sigma) + mmd.mix_rbf_mmd2(feat_s1,feat_s4, sigma) +\
-                mmd.mix_rbf_mmd2(feat_s1, feat_t, sigma) + mmd.mix_rbf_mmd2(feat_s2, feat_s3, sigma) + mmd.mix_rbf_mmd2(feat_s2, feat_t, sigma) +\
-                mmd.mix_rbf_mmd2(feat_s2, feat_s4, sigma) + mmd.mix_rbf_mmd2(feat_s3, feat_s4, sigma) + mmd.mix_rbf_mmd2(feat_s3, feat_t, sigma) +\
-                mmd.mix_rbf_mmd2(feat_s4, feat_t, sigma)
+            loss_msda =  mmd.mix_rbf_mmd2(feat_s1, feat_s2, sigma) +\
+                mmd.mix_rbf_mmd2(feat_s1, feat_t, sigma) + mmd.mix_rbf_mmd2(feat_s2, feat_t, sigma) 
+               
             loss = 10*loss_msda + loss_s
             loss.backward()
 
@@ -433,9 +510,9 @@ class Solver(object):
             if batch_idx % self.interval == 0:
                 print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss1: {:.6f}\t Loss2: {:.6f}\t Loss3: {:.6f}\t Loss4: {:.6f}\t Discrepancy: {:.6f}'.format(
                     epoch, batch_idx, 100,
-                    100. * batch_idx / 70000, loss_s1.data[0], loss_s2.data[0], loss_s3.data[0] , loss_s4.data[0] ,loss_msda.data[0]))
+                    100. * batch_idx / 70000, loss_s1.data[0], loss_s2.data[0] ,loss_msda.data[0]))
                 if record_file:
                     record = open(record_file, 'a')
-                    record.write('%s %s %s %s %s\n' % (loss_msda.data[0], loss_s1.data[0], loss_s2.data[0], loss_s3.data[0], loss_s4.data[0]))
+                    record.write('%s %s %s %s %s\n' % (loss_msda.data[0], loss_s1.data[0], loss_s2.data[0]))
                     record.close()
         return batch_idx

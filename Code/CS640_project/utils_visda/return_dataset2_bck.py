@@ -25,6 +25,14 @@ def return_dataset(args):
     image_set_file_s2 = os.path.join(base_path, args.source2 +'_all' + '.txt')
     #image_set_file_s2= os.path.join(base_path, args.source2 +'_all' + '.txt')
     image_set_file_t = os.path.join(base_path, args.target + '_all' + '.txt')
+
+    print("HERE")
+    print(image_set_file_s1)
+    print()
+    print(image_set_file_s2)
+    print()
+    print(image_set_file_t)
+    print()
     #image_set_file_test = os.path.join(base_path, args.target + '_unl' + '.txt')
     if args.net == 'alexnet':
         print("network is alexnet, crop size is 227")
@@ -71,8 +79,12 @@ def return_dataset(args):
     
     class_list1 = return_classlist(image_set_file_s1)
     class_list2 = return_classlist(image_set_file_s1)
-    print("%d classes in this dataset (based on source 1)"%len(class_list1))
-    print("%d classes in this dataset (based on source 2)"%len(class_list2))
+    print("%d classes in this dataset (from source 1)"%len(class_list1))
+    print("%d classes in this dataset (from source 2)"%len(class_list2))
+    print(class_list1)
+    print()
+    print(class_list2)
+    print()
 
 
     if args.net == 'alexnet':
@@ -82,6 +94,8 @@ def return_dataset(args):
         print("network is ",args.net, " batch size is 24") 
         bs = 24
     print("loading datasets")
+    print(source_dataset1)
+    print()
     source_loader1 = torch.utils.data.DataLoader(source_dataset1, batch_size=bs, num_workers=3, shuffle=True,
                                                 drop_last=True)
     source_loader2 = torch.utils.data.DataLoader(source_dataset2, batch_size=bs, num_workers=3, shuffle=True,
