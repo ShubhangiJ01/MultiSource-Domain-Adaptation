@@ -34,4 +34,4 @@ parameter4 = record_folder
 All model weights can be found [here](https://drive.google.com/file/d/1aZtT1rrFXTfDd4XCeauvwgi24axLng9V/view?usp=sharing)
 # Report: 
 
-For detail understanding refer [documentation](Final_Report.pdf)
+For detail understanding refer [documentation](https://github.com/ShubhangiJ01/MultiSource-Domain-Adaptation/blob/master/Final%20Report.pdf)
